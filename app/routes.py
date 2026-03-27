@@ -9,11 +9,16 @@ from flask import (
     request,
     session,
     url_for,
+    current_app,
 )
+from flask_mail import Message
+from datetime import datetime, timedelta
+import random
+import string
 
-from . import db
+from . import db, mail
 from sqlalchemy import or_
-from .models import ActivityHistory, StoredItem, User
+from .models import ActivityHistory, StoredItem, User, ResetToken
 
 
 main_bp = Blueprint("main", __name__)
@@ -42,6 +47,10 @@ def log_activity(user: User, description: str) -> None:
     activity = ActivityHistory(
         user_id=user.id, activity_description=description)
     db.session.add(activity)
+
+
+def generate_otp():
+    return ''.join(random.choices(string.digits, k=6))
 
 
 @main_bp.route("/")
@@ -153,8 +162,32 @@ def forgot_password():
                 or_(User.email == identifier, User.username == identifier)
             ).first()
             if user:
-                flash("Password reset instructions have been sent to your email.")
-                # TODO: Implement actual email sending with reset token
+                # Generate OTP
+                otp = generate_otp()
+                expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+                # Delete old tokens
+                ResetToken.query.filter_by(user_id=user.id).delete()
+
+                # Create new token
+                token = ResetToken(user_id=user.id, otp=otp,
+                                   expires_at=expires_at)
+                db.session.add(token)
+                db.session.commit()
+
+                # Send email
+                msg = Message(
+                    subject="Password Reset OTP",
+                    recipients=[user.email],
+                    body=f"Your password reset OTP is: {otp}\nIt expires in 10 minutes.",
+                    sender=current_app.config['MAIL_USERNAME']
+                )
+                try:
+                    mail.send(msg)
+                    flash("6-digit OTP sent to your email. Check inbox/spam.")
+                except Exception as e:
+                    flash("Email sending failed. Please try again.")
+                    db.session.rollback()
             else:
                 error = "No account found with that email or username."
 
@@ -162,6 +195,36 @@ def forgot_password():
             flash(error)
 
     return render_template("forgot_password.html")
+
+
+@main_bp.route("/reset-password/<int:token_id>", methods=["GET", "POST"])
+def reset_password(token_id):
+    token = ResetToken.query.filter_by(id=token_id).filter(
+        ResetToken.expires_at > datetime.utcnow()).first_or_404()
+
+    if request.method == "POST":
+        password = request.form.get("password", "").strip()
+        confirm = request.form.get("confirm", "").strip()
+        error = None
+
+        if not password:
+            error = "Password is required."
+        elif password != confirm:
+            error = "Passwords do not match."
+        elif len(password) < 6:
+            error = "Password must be at least 6 characters."
+
+        if error is None:
+            token.user.set_password(password)
+            db.session.delete(token)
+            db.session.commit()
+            flash("Password reset successful. Please log in.")
+            log_activity(token.user, "Password reset via OTP")
+            return redirect(url_for("main.login"))
+
+        flash(error)
+
+    return render_template("reset_password.html", token_id=token_id, username=token.user.username)
 
 
 @main_bp.route("/items/new", methods=["GET", "POST"])
