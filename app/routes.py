@@ -12,6 +12,7 @@ from flask import (
 )
 
 from . import db
+from sqlalchemy import or_
 from .models import ActivityHistory, StoredItem, User
 
 
@@ -38,7 +39,8 @@ def load_logged_in_user():
 def log_activity(user: User, description: str) -> None:
     if not user:
         return
-    activity = ActivityHistory(user_id=user.id, activity_description=description)
+    activity = ActivityHistory(
+        user_id=user.id, activity_description=description)
     db.session.add(activity)
 
 
@@ -138,6 +140,30 @@ def logout():
     return redirect(url_for("main.login"))
 
 
+@main_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        identifier = request.form.get("identifier", "").strip()
+        error = None
+
+        if not identifier:
+            error = "Email or username is required."
+        else:
+            user = User.query.filter(
+                or_(User.email == identifier, User.username == identifier)
+            ).first()
+            if user:
+                flash("Password reset instructions have been sent to your email.")
+                # TODO: Implement actual email sending with reset token
+            else:
+                error = "No account found with that email or username."
+
+        if error:
+            flash(error)
+
+    return render_template("forgot_password.html")
+
+
 @main_bp.route("/items/new", methods=["GET", "POST"])
 @login_required
 def create_item():
@@ -162,14 +188,16 @@ def create_item():
 @main_bp.route("/items/<int:item_id>")
 @login_required
 def view_item(item_id):
-    item = StoredItem.query.filter_by(id=item_id, user_id=g.user.id).first_or_404()
+    item = StoredItem.query.filter_by(
+        id=item_id, user_id=g.user.id).first_or_404()
     return render_template("item_detail.html", item=item)
 
 
 @main_bp.route("/items/<int:item_id>/edit", methods=["GET", "POST"])
 @login_required
 def update_item(item_id):
-    item = StoredItem.query.filter_by(id=item_id, user_id=g.user.id).first_or_404()
+    item = StoredItem.query.filter_by(
+        id=item_id, user_id=g.user.id).first_or_404()
 
     if request.method == "POST":
         title = request.form.get("title", "").strip()
@@ -193,11 +221,11 @@ def update_item(item_id):
 @main_bp.route("/items/<int:item_id>/delete", methods=["POST"])
 @login_required
 def delete_item(item_id):
-    item = StoredItem.query.filter_by(id=item_id, user_id=g.user.id).first_or_404()
+    item = StoredItem.query.filter_by(
+        id=item_id, user_id=g.user.id).first_or_404()
     title = item.title
     db.session.delete(item)
     log_activity(g.user, f"Deleted item: '{title}'")
     db.session.commit()
     flash("Item deleted.")
     return redirect(url_for("main.dashboard"))
-
