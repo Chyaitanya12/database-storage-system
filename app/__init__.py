@@ -1,9 +1,11 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
+from flask_mail import Mail
 from config import Config
 
 
 db = SQLAlchemy()
+mail = Mail()
 
 
 def create_app():
@@ -12,6 +14,7 @@ def create_app():
     app.config.from_object(Config)
 
     db.init_app(app)
+    mail.init_app(app)
 
     # Import and register blueprints
     from .routes import main_bp
@@ -25,4 +28,3 @@ def create_app():
         db.create_all()
 
     return app
-
